@@ -9,10 +9,12 @@ import com.google.android.gms.maps.GoogleMap;
 import com.google.android.gms.maps.model.LatLngBounds;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 
+import static net.sharewire.googlemapsclustering.Preconditions.checkArgument;
 import static net.sharewire.googlemapsclustering.Preconditions.checkNotNull;
 
 /**
@@ -25,6 +27,7 @@ import static net.sharewire.googlemapsclustering.Preconditions.checkNotNull;
 public class ClusterManager<T extends ClusterItem> implements GoogleMap.OnCameraIdleListener {
 
     private static final int QUAD_TREE_BUCKET_CAPACITY = 4;
+    private static final int DEFAULT_MIN_CLUSTER_SIZE = 1;
 
     private final GoogleMap mGoogleMap;
 
@@ -37,6 +40,8 @@ public class ClusterManager<T extends ClusterItem> implements GoogleMap.OnCamera
     private AsyncTask mQuadTreeTask;
 
     private AsyncTask mClusterTask;
+
+    private int mMinClusterSize = DEFAULT_MIN_CLUSTER_SIZE;
 
     /**
      * Defines signatures for methods that are called when a cluster or a cluster item is clicked.
@@ -113,6 +118,15 @@ public class ClusterManager<T extends ClusterItem> implements GoogleMap.OnCamera
         buildQuadTree(clusterItems);
     }
 
+    /**
+     * Sets the minimum size of a cluster. If the cluster size
+     * is less than this value, display individual markers.
+     */
+    public void setMinClusterSize(int minClusterSize) {
+        checkArgument(minClusterSize > 0);
+        mMinClusterSize = minClusterSize;
+    }
+
     @Override
     public void onCameraIdle() {
         cluster();
@@ -150,6 +164,25 @@ public class ClusterManager<T extends ClusterItem> implements GoogleMap.OnCamera
         double stepLatitude = 180.0 / tileCount;
         double stepLongitude = 360.0 / tileCount;
 
+        if (startLongitude > endLongitude) { // Longitude +180°/-180° overlap.
+            // [start longitude; 180]
+            getClustersInsideBounds(clusters, startLatitude, endLatitude,
+                    startLongitude, 180.0, stepLatitude, stepLongitude);
+            // [-180; end longitude]
+            getClustersInsideBounds(clusters, startLatitude, endLatitude,
+                    -180.0, endLongitude, stepLatitude, stepLongitude);
+        } else {
+            getClustersInsideBounds(clusters, startLatitude, endLatitude,
+                    startLongitude, endLongitude, stepLatitude, stepLongitude);
+        }
+
+        return clusters;
+    }
+
+    private void getClustersInsideBounds(@NonNull List<Cluster<T>> clusters,
+                                         double startLatitude, double endLatitude,
+                                         double startLongitude, double endLongitude,
+                                         double stepLatitude, double stepLongitude) {
         long startX = (long) ((startLongitude + 180.0) / stepLongitude);
         long startY = (long) ((90.0 - startLatitude) / stepLatitude);
 
@@ -165,11 +198,15 @@ public class ClusterManager<T extends ClusterItem> implements GoogleMap.OnCamera
 
                 List<T> points = mQuadTree.queryRange(north, west, south, east);
 
-                if (points.size() > 0) {
+                if (points.isEmpty()) {
+                    continue;
+                }
+
+                if (points.size() >= mMinClusterSize) {
                     double totalLatitude = 0;
                     double totalLongitude = 0;
 
-                    for (QuadTreePoint point : points) {
+                    for (T point : points) {
                         totalLatitude += point.getLatitude();
                         totalLongitude += point.getLongitude();
                     }
@@ -177,13 +214,16 @@ public class ClusterManager<T extends ClusterItem> implements GoogleMap.OnCamera
                     double latitude = totalLatitude / points.size();
                     double longitude = totalLongitude / points.size();
 
-                    clusters.add(new Cluster<>(latitude, longitude, points,
-                            north, west, south, east));
+                    clusters.add(new Cluster<>(latitude, longitude,
+                            points, north, west, south, east));
+                } else {
+                    for (T point : points) {
+                        clusters.add(new Cluster<>(point.getLatitude(), point.getLongitude(),
+                                Collections.singletonList(point), north, west, south, east));
+                    }
                 }
             }
         }
-
-        return clusters;
     }
 
     private class QuadTreeTask extends AsyncTask<Void, Void, Void> {
