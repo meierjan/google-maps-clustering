@@ -69,7 +69,7 @@ public class ClusterRenderer<T extends ClusterItem> implements GoogleMap.OnMarke
         mCallbacks = listener;
     }
 
-    void setIconGenerator(@NonNull IconGenerator<T> iconGenerator) {
+    public void setIconGenerator(@NonNull IconGenerator<T> iconGenerator) {
         mIconGenerator = iconGenerator;
     }
 
